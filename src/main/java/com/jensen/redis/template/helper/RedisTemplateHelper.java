@@ -1,10 +1,10 @@
 package com.jensen.redis.template.helper;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.jensen.redis.template.helper.common.Command;
 import com.jensen.redis.template.helper.common.CommandParams;
-import com.jensen.redis.template.helper.utils.DeserializeUtils;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -18,21 +18,50 @@ import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.DefaultTypedTuple;
 import org.springframework.data.redis.core.RedisCallback;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
 import org.springframework.util.CollectionUtils;
 
 public class RedisTemplateHelper {
 
-  private RedisTemplate<String, String> redisTemplate;
+  private final StringRedisTemplate redisTemplate;
 
   public RedisTemplateHelper(RedisConnectionFactory redisConnectionFactory) {
-    redisTemplate = new RedisTemplate<>();
+    redisTemplate = new StringRedisTemplate();
     redisTemplate.setConnectionFactory(redisConnectionFactory);
+    redisTemplate.afterPropertiesSet();
   }
 
   public void delete(String key) {
     redisTemplate.delete(key);
+  }
+
+  public Long incr(String key) {
+    return redisTemplate.opsForValue().increment(key, 1);
+  }
+
+  public Long incrBy(String key, long value) {
+    return redisTemplate.opsForValue().increment(key, value);
+  }
+
+  public Long decr(String key) {
+    return redisTemplate.execute(new RedisCallback<Long>() {
+      @Override
+      public Long doInRedis(RedisConnection connection) throws DataAccessException {
+        return connection
+            .decr(Objects.requireNonNull(redisTemplate.getStringSerializer().serialize(key)));
+      }
+    });
+  }
+
+  public Long decrBy(String key, long value) {
+    return redisTemplate.execute(new RedisCallback<Long>() {
+      @Override
+      public Long doInRedis(RedisConnection connection) throws DataAccessException {
+        return connection.decrBy(
+            Objects.requireNonNull(redisTemplate.getStringSerializer().serialize(key)), value);
+      }
+    });
   }
 
   public Boolean exist(String key) {
@@ -51,16 +80,23 @@ public class RedisTemplateHelper {
     redisTemplate.opsForValue().set(key, value, expiry, TimeUnit.SECONDS);
   }
 
-  public Long setnx(String key, String value, long expiry) {
-    return redisTemplate.execute(new RedisCallback<Long>() {
+  public Boolean setnx(String key, String value) {
+    return redisTemplate.opsForValue().setIfAbsent(key, value);
+  }
+
+  public Boolean setnx(String key, String value, long expiry) {
+    return redisTemplate.execute(new RedisCallback<Boolean>() {
       @Override
-      public Long doInRedis(RedisConnection redisConnection) throws DataAccessException {
-        Object result = redisConnection
-            .execute(Command.SET.getValue(), DeserializeUtils.stringToUTF8Bytes(key),
-                DeserializeUtils.stringToUTF8Bytes(value), CommandParams.XN.getValue(),
-                CommandParams.EX.getValue(),
-                DeserializeUtils.stringToUTF8Bytes(String.valueOf(expiry)));
-        return Objects.isNull(result) ? 0L : (Long) result;
+      public Boolean doInRedis(RedisConnection connection) throws DataAccessException {
+        Object result = connection
+            .execute(Command.SET.getValue(), redisTemplate.getStringSerializer().serialize(key),
+                redisTemplate.getStringSerializer().serialize(value),
+                redisTemplate.getStringSerializer().serialize(CommandParams.XN.getValue()),
+                redisTemplate.getStringSerializer().serialize(CommandParams.EX.getValue()),
+                redisTemplate.getStringSerializer().serialize(String.valueOf(expiry)));
+
+        return !Objects.isNull(result) && "OK"
+            .equalsIgnoreCase((redisTemplate.getStringSerializer().deserialize((byte[]) result)));
       }
     });
   }
@@ -149,8 +185,18 @@ public class RedisTemplateHelper {
       @Override
       public Map<String, String> doInRedis(RedisConnection connection) throws DataAccessException {
         Map<byte[], byte[]> entries = connection.hGetAll(key.getBytes());
-        return CollectionUtils.isEmpty(entries) ? Collections.emptyMap()
-            : DeserializeUtils.deserializeMap(entries);
+
+        if (CollectionUtils.isEmpty(entries)) {
+          return Collections.emptyMap();
+        }
+
+        Map<String, String> resultMap = Maps.newHashMap();
+        for (Entry<byte[], byte[]> entry : entries.entrySet()) {
+          resultMap.put(redisTemplate.getStringSerializer().deserialize(entry.getKey()),
+              redisTemplate.getStringSerializer().deserialize(entry.getValue()));
+        }
+
+        return resultMap;
       }
     });
   }

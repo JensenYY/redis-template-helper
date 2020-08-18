@@ -1,19 +1,17 @@
 package com.jensen.redis.template.helper.common;
 
-import com.jensen.redis.template.helper.utils.DeserializeUtils;
-
 public enum CommandParams {
 
-  XN(DeserializeUtils.stringToUTF8Bytes("NX")),
-  EX(DeserializeUtils.stringToUTF8Bytes("EX"));
+  XN("NX"),
+  EX("EX");
 
-  private byte[] value;
+  private String value;
 
-  CommandParams(byte[] value) {
+  CommandParams(String value) {
     this.value = value;
   }
 
-  public byte[] getValue() {
+  public String getValue() {
     return value;
   }
 }
